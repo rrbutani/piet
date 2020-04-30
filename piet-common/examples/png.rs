@@ -26,5 +26,14 @@ fn main() {
         bitmap
             .save_to_file("temp-image.png")
             .expect("file save error");
+
+        let mut rc = bitmap.render_context();
+        rc.stroke(Line::new((200.0, 200.0), (600.0, 400.0)), &brush, 3.0);
+        rc.finish().unwrap();
+        drop(rc);
+
+        bitmap
+            .save_to_file("temp-image-2.png")
+            .expect("file save error");
     }
 }
