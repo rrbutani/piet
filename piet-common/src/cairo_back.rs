@@ -103,11 +103,27 @@ impl<'a> BitmapTarget<'a> {
 
     /// Get raw RGBA pixels from the bitmap.
     pub fn into_raw_pixels(mut self, fmt: ImageFormat) -> Result<Vec<u8>, piet::Error> {
+        self.get_raw_pixels(fmt)
+    }
+
+    /// Get raw RGBA pixels without consuming the bitmap.
+    pub fn get_raw_pixels(&mut self, fmt: ImageFormat) -> Result<Vec<u8>, piet::Error> {
         // TODO: convert other formats.
         if fmt != ImageFormat::RgbaPremul {
             return Err(piet::new_error(ErrorKind::NotSupported));
         }
-        std::mem::drop(self.cr);
+
+        // A bad hack; because we take self by reference we can't move cr (even
+        // temporarily) so instead we put in a fake cr while we're extracting
+        // data from the surface.
+        //
+        // I don't know of a better way to create a `Context` that we'll never
+        // use; if the fields on `Context` were public we could just construct
+        // one with a null pointer.
+        let surface = ImageSurface::create(Format::ARgb32, 0, 0).unwrap();
+        let temp = Context::new(&surface);
+        drop(std::mem::replace(&mut self.cr, temp));
+
         self.surface.flush();
         let stride = self.surface.get_stride() as usize;
         let width = self.surface.get_width() as usize;
@@ -127,15 +143,19 @@ impl<'a> BitmapTarget<'a> {
                 raw_data[dst_off + x * 4 + 3] = buf[src_off + x * 4 + 3];
             }
         }
+
+        drop(buf);
+        self.cr = Context::new(&self.surface);
+
         Ok(raw_data)
     }
 
     /// Save bitmap to RGBA PNG file
     #[cfg(feature = "png")]
-    pub fn save_to_file<P: AsRef<Path>>(self, path: P) -> Result<(), piet::Error> {
+    pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), piet::Error> {
         let height = self.surface.get_height();
         let width = self.surface.get_width();
-        let image = self.into_raw_pixels(ImageFormat::RgbaPremul)?;
+        let image = self.get_raw_pixels(ImageFormat::RgbaPremul)?;
         let file = BufWriter::new(File::create(path).map_err(|e| Into::<Box<_>>::into(e))?);
         let mut encoder = Encoder::new(file, width as u32, height as u32);
         encoder.set_color(ColorType::RGBA);
@@ -149,7 +169,7 @@ impl<'a> BitmapTarget<'a> {
 
     /// Stub for feature is missing
     #[cfg(not(feature = "png"))]
-    pub fn save_to_file<P: AsRef<Path>>(self, _path: P) -> Result<(), piet::Error> {
+    pub fn save_to_file<P: AsRef<Path>>(&mut self, _path: P) -> Result<(), piet::Error> {
         Err(piet::new_error(ErrorKind::MissingFeature))
     }
 }
